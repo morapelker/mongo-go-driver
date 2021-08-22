@@ -1309,7 +1309,7 @@ func (coll *Collection) FindOne(ctx context.Context, filter interface{},
 	return &SingleResult{cur: cursor, reg: coll.registry, err: replaceErrors(err)}
 }
 
-func (coll *Collection) findAndModify(ctx context.Context, op *operation.FindAndModify) *SingleResult {
+func (coll *Collection) findAndModify(ctx context.Context, op *operation.FindAndModify) (*SingleResult, *operation.LastErrorObject) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1319,14 +1319,14 @@ func (coll *Collection) findAndModify(ctx context.Context, op *operation.FindAnd
 	if sess == nil && coll.client.sessionPool != nil {
 		sess, err = session.NewClientSession(coll.client.sessionPool, coll.client.id, session.Implicit)
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		defer sess.EndSession()
 	}
 
 	err = coll.client.validSession(sess)
 	if err != nil {
-		return &SingleResult{err: err}
+		return &SingleResult{err: err}, nil
 	}
 
 	wc := coll.writeConcern
@@ -1357,10 +1357,12 @@ func (coll *Collection) findAndModify(ctx context.Context, op *operation.FindAnd
 
 	_, err = processWriteError(op.Execute(ctx))
 	if err != nil {
-		return &SingleResult{err: err}
+		return &SingleResult{err: err}, nil
 	}
 
-	return &SingleResult{rdr: bson.Raw(op.Result().Value), reg: coll.registry}
+	result := op.Result()
+	rawBson := result.LastErrorObject
+	return &SingleResult{rdr: bson.Raw(result.Value), reg: coll.registry}, &rawBson
 }
 
 // FindOneAndDelete executes a findAndModify command to delete at most one document in the collection. and returns the
@@ -1375,11 +1377,11 @@ func (coll *Collection) findAndModify(ctx context.Context, op *operation.FindAnd
 //
 // For more information about the command, see https://docs.mongodb.com/manual/reference/command/findAndModify/.
 func (coll *Collection) FindOneAndDelete(ctx context.Context, filter interface{},
-	opts ...*options.FindOneAndDeleteOptions) *SingleResult {
+	opts ...*options.FindOneAndDeleteOptions) (*SingleResult, *operation.LastErrorObject) {
 
 	f, err := transformBsoncoreDocument(coll.registry, filter, true, "filter")
 	if err != nil {
-		return &SingleResult{err: err}
+		return &SingleResult{err: err}, nil
 	}
 	fod := options.MergeFindOneAndDeleteOptions(opts...)
 	op := operation.NewFindAndModify(f).Remove(true).ServerAPI(coll.client.serverAPI)
@@ -1392,21 +1394,21 @@ func (coll *Collection) FindOneAndDelete(ctx context.Context, filter interface{}
 	if fod.Projection != nil {
 		proj, err := transformBsoncoreDocument(coll.registry, fod.Projection, true, "projection")
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.Fields(proj)
 	}
 	if fod.Sort != nil {
 		sort, err := transformBsoncoreDocument(coll.registry, fod.Sort, false, "sort")
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.Sort(sort)
 	}
 	if fod.Hint != nil {
 		hint, err := transformValue(coll.registry, fod.Hint, false, "hint")
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.Hint(hint)
 	}
@@ -1429,18 +1431,18 @@ func (coll *Collection) FindOneAndDelete(ctx context.Context, filter interface{}
 //
 // For more information about the command, see https://docs.mongodb.com/manual/reference/command/findAndModify/.
 func (coll *Collection) FindOneAndReplace(ctx context.Context, filter interface{},
-	replacement interface{}, opts ...*options.FindOneAndReplaceOptions) *SingleResult {
+	replacement interface{}, opts ...*options.FindOneAndReplaceOptions) (*SingleResult, *operation.LastErrorObject) {
 
 	f, err := transformBsoncoreDocument(coll.registry, filter, true, "filter")
 	if err != nil {
-		return &SingleResult{err: err}
+		return &SingleResult{err: err}, nil
 	}
 	r, err := transformBsoncoreDocument(coll.registry, replacement, true, "replacement")
 	if err != nil {
-		return &SingleResult{err: err}
+		return &SingleResult{err: err}, nil
 	}
 	if firstElem, err := r.IndexErr(0); err == nil && strings.HasPrefix(firstElem.Key(), "$") {
-		return &SingleResult{err: errors.New("replacement document cannot contain keys beginning with '$'")}
+		return &SingleResult{err: errors.New("replacement document cannot contain keys beginning with '$'")}, nil
 	}
 
 	fo := options.MergeFindOneAndReplaceOptions(opts...)
@@ -1458,7 +1460,7 @@ func (coll *Collection) FindOneAndReplace(ctx context.Context, filter interface{
 	if fo.Projection != nil {
 		proj, err := transformBsoncoreDocument(coll.registry, fo.Projection, true, "projection")
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.Fields(proj)
 	}
@@ -1468,7 +1470,7 @@ func (coll *Collection) FindOneAndReplace(ctx context.Context, filter interface{
 	if fo.Sort != nil {
 		sort, err := transformBsoncoreDocument(coll.registry, fo.Sort, false, "sort")
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.Sort(sort)
 	}
@@ -1478,7 +1480,7 @@ func (coll *Collection) FindOneAndReplace(ctx context.Context, filter interface{
 	if fo.Hint != nil {
 		hint, err := transformValue(coll.registry, fo.Hint, false, "hint")
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.Hint(hint)
 	}
@@ -1502,7 +1504,7 @@ func (coll *Collection) FindOneAndReplace(ctx context.Context, filter interface{
 //
 // For more information about the command, see https://docs.mongodb.com/manual/reference/command/findAndModify/.
 func (coll *Collection) FindOneAndUpdate(ctx context.Context, filter interface{},
-	update interface{}, opts ...*options.FindOneAndUpdateOptions) *SingleResult {
+	update interface{}, opts ...*options.FindOneAndUpdateOptions) (*SingleResult, *operation.LastErrorObject) {
 
 	if ctx == nil {
 		ctx = context.Background()
@@ -1510,7 +1512,7 @@ func (coll *Collection) FindOneAndUpdate(ctx context.Context, filter interface{}
 
 	f, err := transformBsoncoreDocument(coll.registry, filter, true, "filter")
 	if err != nil {
-		return &SingleResult{err: err}
+		return &SingleResult{err: err}, nil
 	}
 
 	fo := options.MergeFindOneAndUpdateOptions(opts...)
@@ -1518,14 +1520,14 @@ func (coll *Collection) FindOneAndUpdate(ctx context.Context, filter interface{}
 
 	u, err := transformUpdateValue(coll.registry, update, true)
 	if err != nil {
-		return &SingleResult{err: err}
+		return &SingleResult{err: err}, nil
 	}
 	op = op.Update(u)
 
 	if fo.ArrayFilters != nil {
 		filtersDoc, err := fo.ArrayFilters.ToArrayDocument()
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.ArrayFilters(bsoncore.Document(filtersDoc))
 	}
@@ -1541,7 +1543,7 @@ func (coll *Collection) FindOneAndUpdate(ctx context.Context, filter interface{}
 	if fo.Projection != nil {
 		proj, err := transformBsoncoreDocument(coll.registry, fo.Projection, true, "projection")
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.Fields(proj)
 	}
@@ -1551,7 +1553,7 @@ func (coll *Collection) FindOneAndUpdate(ctx context.Context, filter interface{}
 	if fo.Sort != nil {
 		sort, err := transformBsoncoreDocument(coll.registry, fo.Sort, false, "sort")
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.Sort(sort)
 	}
@@ -1561,7 +1563,7 @@ func (coll *Collection) FindOneAndUpdate(ctx context.Context, filter interface{}
 	if fo.Hint != nil {
 		hint, err := transformValue(coll.registry, fo.Hint, false, "hint")
 		if err != nil {
-			return &SingleResult{err: err}
+			return &SingleResult{err: err}, nil
 		}
 		op = op.Hint(hint)
 	}

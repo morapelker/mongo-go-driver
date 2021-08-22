@@ -48,6 +48,7 @@ type FindAndModify struct {
 	crypt                    *driver.Crypt
 	hint                     bsoncore.Value
 	serverAPI                *driver.ServerAPIOptions
+	fullResult               bool
 
 	result FindAndModifyResult
 }
